@@ -78,8 +78,8 @@
     .buy-btn:hover { background: #dddddd; transform: scale(1.04); }
     .ca-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2rem; flex-wrap: wrap; justify-content: center; animation: fadeUp 0.6s 0.35s ease both; }
     .ca-label { font-size: 11px; color: #555555; letter-spacing: 1px; }
-    .ca-address { font-family: 'Space Mono', monospace; font-size: 11px; color: #888888; text-decoration: none; border-bottom: 1px dashed #2a2a2a; transition: color 0.2s, border-color 0.2s; letter-spacing: 0.5px; word-break: break-all; text-align: center; }
-    .ca-address:hover { color: #ffffff; border-color: #ffffff; }
+    .ca-address { font-family: 'Space Mono', monospace; font-size: 11px; color: #888888; border-bottom: 1px dashed #2a2a2a; letter-spacing: 0.5px; word-break: break-all; text-align: center; cursor: default; }
+    
     .ca-copy { background: transparent; border: 1px solid #2a2a2a; color: #555555; font-size: 13px; cursor: pointer; width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: border-color 0.2s, color 0.2s; flex-shrink: 0; }
     .ca-copy:hover { border-color: #ffffff; color: #ffffff; }
     .ca-copy.copied { border-color: #ffffff; color: #ffffff; }
@@ -131,16 +131,15 @@
 
     <div class="ca-row">
       <span class="ca-label">CA:</span>
-      <a class="ca-address" href="00000" target="_blank" rel="noopener" id="caDisplay">00000</a>
+      <span class="ca-address" id="caDisplay">00000</span>
       <button class="ca-copy" onclick="copyCA()" id="copyBtn" title="Copy CA">⎘</button>
     </div>
     <p class="footer">© daosscan 2026, all rights reserved.</p>
   </div>
 
   <script>
-    const CA = '00000';
+    const CA = '0000daos';
 
-    /* ── Copy CA ── */
     function copyCA() {
       const btn = document.getElementById('copyBtn');
       navigator.clipboard.writeText(CA).catch(() => {
@@ -152,7 +151,6 @@
       setTimeout(() => { btn.textContent = '⎘'; btn.classList.remove('copied'); }, 2000);
     }
 
-    /* ── GitHub API ── */
     async function ghFetch(url) {
       const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github.v3+json' } });
       if (!res.ok) throw new Error('GitHub API error: ' + res.status);
@@ -165,17 +163,16 @@
       return { owner: parts[0], repo: parts[1] };
     }
 
-    /* ── Real scanner ── */
     async function scanRepo(owner, repo, setStatus, setProgress) {
       const findings = [];
-      const repoBase = `https://api.github.com/repos/${owner}/${repo}`;
+      const repoBase = 'https://api.github.com/repos/' + owner + '/' + repo;
 
       setStatus('Fetching repository info...'); setProgress(10);
       const repoInfo = await ghFetch(repoBase);
 
       setStatus('Reading file structure...'); setProgress(20);
       let rootFiles = [];
-      try { rootFiles = await ghFetch(`${repoBase}/contents/`); } catch(e) {}
+      try { rootFiles = await ghFetch(repoBase + '/contents/'); } catch(e) {}
       const fileNames = rootFiles.map(f => f.name.toLowerCase());
 
       setProgress(30); setStatus('Checking security files...');
@@ -189,8 +186,8 @@
       setProgress(40); setStatus('Scanning .gitignore...');
       if (fileNames.includes('.gitignore')) {
         try {
-          const gi = await ghFetch(`${repoBase}/contents/.gitignore`);
-          const giContent = atob(gi.content.replace(/\n/g,'')).toLowerCase();
+          const gi = await ghFetch(repoBase + '/contents/.gitignore');
+          const giContent = atob(gi.content.replace(/\n/g, '')).toLowerCase();
           if (!giContent.includes('.env'))
             findings.push({l:'WARN', t:'.env not in .gitignore', d:'The .env file is not listed in .gitignore — secrets and API keys could be accidentally committed.'});
           if (!giContent.includes('node_modules') && fileNames.includes('package.json'))
@@ -203,29 +200,23 @@
       setProgress(50); setStatus('Auditing dependencies...');
       if (fileNames.includes('package.json')) {
         try {
-          const pkgFile = await ghFetch(`${repoBase}/contents/package.json`);
-          const pkg = JSON.parse(atob(pkgFile.content.replace(/\n/g,'')));
-          const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-          const riskyPkgs = {
-            'event-stream':'CRITICAL','flatmap-stream':'CRITICAL','node-ipc':'CRITICAL',
-            'colors':'WARN','faker':'WARN','lodash':'INFO','moment':'INFO','request':'WARN','crypto':'INFO',
-          };
-          for (const [dep] of Object.entries(allDeps)) {
+          const pkgFile = await ghFetch(repoBase + '/contents/package.json');
+          const pkg = JSON.parse(atob(pkgFile.content.replace(/\n/g, '')));
+          const allDeps = Object.assign({}, pkg.dependencies, pkg.devDependencies);
+          const riskyPkgs = {'event-stream':'CRITICAL','flatmap-stream':'CRITICAL','node-ipc':'CRITICAL','colors':'WARN','faker':'WARN','lodash':'INFO','moment':'INFO','request':'WARN','crypto':'INFO'};
+          for (const dep in allDeps) {
             if (riskyPkgs[dep])
-              findings.push({l:riskyPkgs[dep], t:`Risky dependency: ${dep}`, d:`Package "${dep}" has known security issues or is deprecated.`});
+              findings.push({l:riskyPkgs[dep], t:'Risky dependency: ' + dep, d:'Package "' + dep + '" has known security issues or is deprecated.'});
           }
           const depCount = Object.keys(allDeps).length;
-          if (depCount > 50)
-            findings.push({l:'WARN', t:`Large dependency tree (${depCount} packages)`, d:`${depCount} dependencies detected. Large trees increase supply chain attack surface.`});
-          else if (depCount > 20)
-            findings.push({l:'INFO', t:`${depCount} dependencies found`, d:`Moderate dependency count. Recommend running "npm audit" regularly.`});
+          if (depCount > 50) findings.push({l:'WARN', t:'Large dependency tree (' + depCount + ' packages)', d:depCount + ' dependencies detected. Large trees increase supply chain attack surface.'});
+          else if (depCount > 20) findings.push({l:'INFO', t:depCount + ' dependencies found', d:'Moderate dependency count. Recommend running npm audit regularly.'});
           if (pkg.scripts) {
-            const scripts = JSON.stringify(pkg.scripts).toLowerCase();
-            if (scripts.includes('curl') || scripts.includes('wget') || scripts.includes('bash'))
+            const s = JSON.stringify(pkg.scripts).toLowerCase();
+            if (s.includes('curl') || s.includes('wget') || s.includes('bash'))
               findings.push({l:'CRITICAL', t:'Dangerous script detected', d:'package.json scripts contain curl/wget/bash — a common supply chain attack vector.'});
           }
-          if (!pkg.engines)
-            findings.push({l:'INFO', t:'No Node.js version specified', d:'No "engines" field in package.json. Specifying Node.js version prevents compatibility issues.'});
+          if (!pkg.engines) findings.push({l:'INFO', t:'No Node.js version specified', d:'No engines field in package.json. Specifying Node.js version prevents compatibility issues.'});
         } catch(e) {
           findings.push({l:'INFO', t:'Could not parse package.json', d:'package.json exists but could not be fully parsed. Manually review dependencies.'});
         }
@@ -233,71 +224,70 @@
 
       setProgress(65); setStatus('Scanning source code for vulnerabilities...');
       const codeExts = ['.js','.ts','.py','.sol','.rs','.go','.jsx','.tsx'];
-      const codeFiles = rootFiles.filter(f => codeExts.some(ext => f.name.endsWith(ext)));
+      const codeFiles = rootFiles.filter(function(f){ return codeExts.some(function(ext){ return f.name.endsWith(ext); }); });
       let hardcodedSecrets=false, evalUsage=false, httpUsage=false, sqlPatterns=false, privateKeyPattern=false, scannedFiles=0;
 
-      for (const file of codeFiles.slice(0,8)) {
+      for (let i = 0; i < Math.min(codeFiles.length, 8); i++) {
         try {
-          const fileData = await ghFetch(`${repoBase}/contents/${file.name}`);
-          const code = atob(fileData.content.replace(/\n/g,''));
+          const fileData = await ghFetch(repoBase + '/contents/' + codeFiles[i].name);
+          const code = atob(fileData.content.replace(/\n/g, ''));
           scannedFiles++;
           if (/(?:api_key|apikey|secret|password|passwd|private_key)\s*=\s*['"][^'"]{8,}/i.test(code)) hardcodedSecrets = true;
-          if (/\beval\s*\(/.test(code)) evalUsage = true;
+          if (/eval\s*\(/.test(code)) evalUsage = true;
           if (/http:\/\/(?!localhost|127\.0\.0\.1)/.test(code)) httpUsage = true;
           if (/(?:SELECT|INSERT|UPDATE|DELETE).*\+\s*(?:req|input|user|param)/i.test(code)) sqlPatterns = true;
-          if (/(?:privateKey|private_key|secretKey)\s*[:=]\s*['"][a-zA-Z0-9+/]{20,}/.test(code)) privateKeyPattern = true;
+          if (/(?:privateKey|private_key|secretKey)\s*[:=]\s*['"][a-zA-Z0-9+\/]{20,}/.test(code)) privateKeyPattern = true;
         } catch(e) {}
       }
 
-      if (hardcodedSecrets)  findings.push({l:'CRITICAL', t:'Hardcoded secrets detected',   d:'Possible hardcoded API keys or secrets found. Rotate all credentials immediately.'});
-      if (privateKeyPattern) findings.push({l:'CRITICAL', t:'Private key in source code',    d:'A private key pattern was found hardcoded in source files. Remove immediately.'});
-      if (evalUsage)         findings.push({l:'WARN',     t:'eval() usage detected',          d:'eval() executes arbitrary strings as code — major risk if user input can reach it.'});
-      if (httpUsage)         findings.push({l:'WARN',     t:'HTTP (non-HTTPS) requests',      d:'Non-HTTPS URLs found. Unencrypted requests expose data to man-in-the-middle attacks.'});
-      if (sqlPatterns)       findings.push({l:'CRITICAL', t:'Potential SQL injection',        d:'String concatenation in SQL queries detected. Use parameterized queries instead.'});
+      if (hardcodedSecrets)  findings.push({l:'CRITICAL', t:'Hardcoded secrets detected', d:'Possible hardcoded API keys or secrets found. Rotate all credentials immediately.'});
+      if (privateKeyPattern) findings.push({l:'CRITICAL', t:'Private key in source code', d:'A private key pattern was found hardcoded in source files. Remove immediately.'});
+      if (evalUsage)         findings.push({l:'WARN', t:'eval() usage detected', d:'eval() executes arbitrary strings as code — major risk if user input can reach it.'});
+      if (httpUsage)         findings.push({l:'WARN', t:'HTTP (non-HTTPS) requests', d:'Non-HTTPS URLs found. Unencrypted requests expose data to man-in-the-middle attacks.'});
+      if (sqlPatterns)       findings.push({l:'CRITICAL', t:'Potential SQL injection', d:'String concatenation in SQL queries detected. Use parameterized queries instead.'});
 
       setProgress(80); setStatus('Checking repository health...');
       if (repoInfo.open_issues_count > 100)
-        findings.push({l:'WARN', t:`${repoInfo.open_issues_count} open issues`, d:`High open issue count may indicate unmaintained code.`});
-      const monthsAgo = (Date.now() - new Date(repoInfo.pushed_at)) / (1000*60*60*24*30);
+        findings.push({l:'WARN', t:repoInfo.open_issues_count + ' open issues', d:'High open issue count may indicate unmaintained code.'});
+      const monthsAgo = (Date.now() - new Date(repoInfo.pushed_at).getTime()) / (1000*60*60*24*30);
       if (monthsAgo > 12)
-        findings.push({l:'WARN', t:`Repo inactive for ${Math.floor(monthsAgo)} months`, d:`Last commit was ${Math.floor(monthsAgo)} months ago. Unmaintained repos may have unaddressed vulnerabilities.`});
+        findings.push({l:'WARN', t:'Repo inactive for ' + Math.floor(monthsAgo) + ' months', d:'Last commit was ' + Math.floor(monthsAgo) + ' months ago. Unmaintained repos may have unaddressed vulnerabilities.'});
       else if (monthsAgo > 6)
-        findings.push({l:'INFO', t:`Last commit ${Math.floor(monthsAgo)} months ago`, d:'Repository has not been updated recently.'});
+        findings.push({l:'INFO', t:'Last commit ' + Math.floor(monthsAgo) + ' months ago', d:'Repository has not been updated recently.'});
       if (!repoInfo.description)
         findings.push({l:'INFO', t:'No repository description', d:'No description found. Adding one helps users understand the project purpose.'});
 
       setProgress(88); setStatus('Checking test coverage...');
-      if (!rootFiles.some(f => f.name.toLowerCase().includes('test') || f.name.toLowerCase().includes('spec')))
+      if (!rootFiles.some(function(f){ return f.name.toLowerCase().includes('test') || f.name.toLowerCase().includes('spec'); }))
         findings.push({l:'INFO', t:'No test directory found', d:'No test files detected at root level. Untested code paths are harder to audit.'});
 
       setProgress(93); setStatus('Checking CI/CD security...');
       try {
-        const workflows = await ghFetch(`${repoBase}/contents/.github/workflows`);
-        const hasScan = workflows.some(w =>
-          w.name.toLowerCase().includes('security') ||
-          w.name.toLowerCase().includes('codeql') ||
-          w.name.toLowerCase().includes('audit')
-        );
-        if (!hasScan)
-          findings.push({l:'INFO', t:'No security CI/CD workflow', d:'No automated security scanning detected. Consider adding CodeQL or npm audit to your CI pipeline.'});
+        const workflows = await ghFetch(repoBase + '/contents/.github/workflows');
+        const hasScan = workflows.some(function(w){
+          return w.name.toLowerCase().includes('security') || w.name.toLowerCase().includes('codeql') || w.name.toLowerCase().includes('audit');
+        });
+        if (!hasScan) findings.push({l:'INFO', t:'No security CI/CD workflow', d:'No automated security scanning detected. Consider adding CodeQL or npm audit to your CI pipeline.'});
       } catch(e) {
         findings.push({l:'INFO', t:'No GitHub Actions workflows', d:'No CI/CD workflows found. Automated testing and security scanning are recommended.'});
       }
 
       setProgress(100); setStatus('');
-      const criticals = findings.filter(f=>f.l==='CRITICAL').length;
-      const warns     = findings.filter(f=>f.l==='WARN').length;
-      let score = criticals >= 1 ? 'DANGER' : warns >= 1 ? 'WARNING' : 'SAFE';
-      return { score, findings, repoInfo, scannedFiles };
+      const criticals = findings.filter(function(f){ return f.l === 'CRITICAL'; }).length;
+      const warns     = findings.filter(function(f){ return f.l === 'WARN'; }).length;
+      const score = criticals >= 1 ? 'DANGER' : warns >= 1 ? 'WARNING' : 'SAFE';
+      return { score: score, findings: findings, repoInfo: repoInfo, scannedFiles: scannedFiles };
     }
 
-    /* ── Main runner ── */
     async function runAudit() {
       const input = document.getElementById('repoInput').value.trim();
       if (!input) { alert('Please paste a GitHub repo URL first!'); return; }
-      if (!input.includes('github.com')) { alert('Please enter a valid GitHub URL\ne.g. https://github.com/org/repo'); return; }
+      if (!input.includes('github.com')) { alert('Please enter a valid GitHub URL. e.g. https://github.com/org/repo'); return; }
 
-      const { owner, repo } = parseGitHubURL(input);
+      const parsed = parseGitHubURL(input);
+      const owner = parsed.owner;
+      const repo  = parsed.repo;
+
       const btn          = document.getElementById('auditBtn');
       const resultBox    = document.getElementById('resultBox');
       const resultBody   = document.getElementById('resultBody');
@@ -307,64 +297,87 @@
       const progressFill = document.getElementById('progressFill');
       const statusLine   = document.getElementById('statusLine');
 
-      btn.disabled=true; btn.textContent='SCANNING...';
+      btn.disabled = true;
+      btn.textContent = 'SCANNING...';
       resultBox.classList.add('visible');
-      resultRepo.textContent=input;
-      scorePill.textContent=''; scorePill.className='score-pill';
-      resultMeta.innerHTML='';
-      resultBody.innerHTML='<span class="loading-dots">Connecting to GitHub</span>';
-      progressFill.style.width='0%'; statusLine.textContent='';
+      resultRepo.textContent = input;
+      scorePill.textContent = '';
+      scorePill.className = 'score-pill';
+      resultMeta.innerHTML = '';
+      resultBody.innerHTML = '<span class="loading-dots">Connecting to GitHub</span>';
+      progressFill.style.width = '0%';
+      statusLine.textContent = '';
 
-      const setStatus=t=>{statusLine.textContent=t;};
-      const setProgress=p=>{progressFill.style.width=p+'%';};
+      function setStatus(t)   { statusLine.textContent = t; }
+      function setProgress(p) { progressFill.style.width = p + '%'; }
 
       try {
-        const {score,findings,repoInfo,scannedFiles}=await scanRepo(owner,repo,setStatus,setProgress);
-        const cls={SAFE:'score-safe',WARNING:'score-warn',DANGER:'score-danger'};
-        const icon={CRITICAL:'🔴',WARN:'🟡',INFO:'🔵'};
+        const result = await scanRepo(owner, repo, setStatus, setProgress);
+        const score      = result.score;
+        const findings   = result.findings;
+        const repoInfo   = result.repoInfo;
+        const scannedFiles = result.scannedFiles;
 
-        scorePill.textContent=score;
-        scorePill.className='score-pill '+(cls[score]||'score-warn');
-        resultMeta.innerHTML=`
-          <span>⭐ ${repoInfo.stargazers_count.toLocaleString()} stars</span>
-          <span>🔤 ${repoInfo.language||'Unknown'}</span>
-          <span>📁 ${scannedFiles} files scanned</span>
-          <span>🕒 Last updated ${new Date(repoInfo.pushed_at).toLocaleDateString()}</span>
-        `;
+        const cls  = { SAFE:'score-safe', WARNING:'score-warn', DANGER:'score-danger' };
+        const icon = { CRITICAL:'🔴', WARN:'🟡', INFO:'🔵' };
 
-        const criticals=findings.filter(f=>f.l==='CRITICAL').length;
-        const warns=findings.filter(f=>f.l==='WARN').length;
-        const infos=findings.filter(f=>f.l==='INFO').length;
+        scorePill.textContent = score;
+        scorePill.className   = 'score-pill ' + (cls[score] || 'score-warn');
 
-        let summary='';
-        if (score==='SAFE') summary=`${repo} passed the security scan with no critical issues. The codebase appears well-structured and follows good security practices.`;
-        else if (score==='WARNING') summary=`${repo} has ${warns} warning(s) that should be addressed before production deployment.`;
-        else summary=`${repo} has ${criticals} critical vulnerability(s) that require immediate attention.`;
+        resultMeta.innerHTML =
+          '<span>⭐ ' + repoInfo.stargazers_count.toLocaleString() + ' stars</span>' +
+          '<span>🔤 ' + (repoInfo.language || 'Unknown') + '</span>' +
+          '<span>📁 ' + scannedFiles + ' files scanned</span>' +
+          '<span>🕒 Last updated ' + new Date(repoInfo.pushed_at).toLocaleDateString() + '</span>';
 
-        let out=summary+'\n\n';
-        out+=`FINDINGS  (${criticals} critical · ${warns} warnings · ${infos} info)\n`;
-        out+='────────────────────────────\n';
-        if (findings.length===0) { out+='✅ No issues found! This repo looks clean.\n'; }
-        else { findings.forEach(f=>{out+=`${icon[f.l]||'🔵'} [${f.l}] ${f.t}\n   ${f.d}\n\n`;}); }
-        out+='────────────────────────────\n';
-        if (score==='SAFE') out+='💡 Maintain current practices and re-audit periodically.';
-        else if (score==='WARNING') out+='💡 Address all WARN-level findings before production deployment.';
-        else out+='💡 Halt deployment immediately. Fix all CRITICAL findings first.';
+        const criticals = findings.filter(function(f){ return f.l==='CRITICAL'; }).length;
+        const warns     = findings.filter(function(f){ return f.l==='WARN'; }).length;
+        const infos     = findings.filter(function(f){ return f.l==='INFO'; }).length;
 
-        resultBody.textContent=out;
+        let summary = '';
+        if (score === 'SAFE')    summary = repo + ' passed the security scan with no critical issues. The codebase appears well-structured and follows good security practices.';
+        else if (score === 'WARNING') summary = repo + ' has ' + warns + ' warning(s) that should be addressed before production deployment.';
+        else summary = repo + ' has ' + criticals + ' critical vulnerability(s) that require immediate attention.';
+
+        let out = summary + '\n\n';
+        out += 'FINDINGS  (' + criticals + ' critical · ' + warns + ' warnings · ' + infos + ' info)\n';
+        out += '────────────────────────────\n';
+        if (findings.length === 0) {
+          out += '✅ No issues found! This repo looks clean.\n';
+        } else {
+          for (let i = 0; i < findings.length; i++) {
+            const f = findings[i];
+            out += (icon[f.l] || '🔵') + ' [' + f.l + '] ' + f.t + '\n   ' + f.d + '\n\n';
+          }
+        }
+        out += '────────────────────────────\n';
+        if (score === 'SAFE')         out += '💡 Maintain current practices and re-audit periodically.';
+        else if (score === 'WARNING') out += '💡 Address all WARN-level findings before production deployment.';
+        else                          out += '💡 Halt deployment immediately. Fix all CRITICAL findings first.';
+
+        resultBody.textContent = out;
+
       } catch(err) {
-        progressFill.style.width='0%'; statusLine.textContent='';
-        scorePill.textContent='ERROR'; scorePill.className='score-pill score-warn';
-        if (err.message.includes('404')) resultBody.textContent='❌ Repository not found. Make sure the repo is public and the URL is correct.';
-        else if (err.message.includes('403')||err.message.includes('429')) resultBody.textContent='⚠️ GitHub API rate limit reached.\n\nWait a few minutes and try again.';
-        else resultBody.textContent='❌ Scan failed: '+err.message+'\n\nMake sure the repository is public and try again.';
+        progressFill.style.width = '0%';
+        statusLine.textContent = '';
+        scorePill.textContent = 'ERROR';
+        scorePill.className = 'score-pill score-warn';
+        if (err.message.includes('404'))
+          resultBody.textContent = '❌ Repository not found. Make sure the repo is public and the URL is correct.';
+        else if (err.message.includes('403') || err.message.includes('429'))
+          resultBody.textContent = '⚠️ GitHub API rate limit reached.\n\nWait a few minutes and try again.';
+        else
+          resultBody.textContent = '❌ Scan failed: ' + err.message + '\n\nMake sure the repository is public and try again.';
       }
-      btn.disabled=false; btn.textContent='SCAN';
+
+      btn.disabled = false;
+      btn.textContent = 'SCAN';
     }
 
-    document.getElementById('repoInput').addEventListener('keydown', e=>{ if(e.key==='Enter') runAudit(); });
+    document.getElementById('repoInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') runAudit();
+    });
   </script>
 </body>
 </body>
 </html>
-
